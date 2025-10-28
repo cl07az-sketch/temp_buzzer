@@ -1,115 +1,103 @@
+#!/usr/bin/env python3
 import os
 import glob
 import time
-
-#!/usr/bin/env python3
-
-import RPi.GPIO as GPIO
-import time
-#!/usr/bin/env python3
 import RPi.GPIO as GPIO
 
-BtnPin = 31
-Gpin   = 12
-Rpin   = 13
-
-def setup():
-    GPIO.setmode(GPIO.BOARD)       # Numbers GPIOs by physical location
-    GPIO.setup(Gpin, GPIO.OUT)     # Set Green Led Pin mode to output
-    GPIO.setup(Rpin, GPIO.OUT)     # Set Red Led Pin mode to output
-    GPIO.setup(BtnPin, GPIO.IN, pull_up_down=GPIO.PUD_UP)    # Set BtnPin's mode is input, and pull up to high level(3.3V)
-    GPIO.add_event_detect(BtnPin, GPIO.BOTH, callback=detect, bouncetime=200)
-
-def Led(x):
-    if x == 1:
-        GPIO.output(Rpin, 1)
-        GPIO.output(Gpin, 0)
-    if x == 0:
-        GPIO.output(Rpin, 0)
-        GPIO.output(Gpin, 1)
-
-def detect(chn):
-    Led(GPIO.input(BtnPin))
-    
 # Define GPIO pins
-BuzzerPin = 11  # GPIO pin connected to Buzzer
+BuzzerPin = 11   # Buzzer pin
+ButtonPin = 13   # Button pin
 
 def setup():
-    """ Setup the GPIO pins for the ultrasonic sensor and buzzer """
+    """Setup GPIO pins"""
     GPIO.setmode(GPIO.BOARD)
-    
-    # Setup for buzzer
     GPIO.setup(BuzzerPin, GPIO.OUT)
+    GPIO.setup(ButtonPin, GPIO.IN, pull_up_down=GPIO.PUD_UP)  # Pull-up resistor for button
     GPIO.output(BuzzerPin, GPIO.HIGH)
 
 def buzzer_on():
-    """ Turn the buzzer on """
+    """Turn the buzzer on"""
     GPIO.output(BuzzerPin, GPIO.LOW)
 
 def buzzer_off():
-    """ Turn the buzzer off """
+    """Turn the buzzer off"""
     GPIO.output(BuzzerPin, GPIO.HIGH)
 
-
-# These two lines mount the device:
+# Load 1-wire device kernel modules for DS18B20
 os.system('modprobe w1-gpio')
 os.system('modprobe w1-therm')
- 
+
+# Locate the sensor
 base_dir = '/sys/bus/w1/devices/'
-# Get all the filenames begin with 28 in the path base_dir.
 device_folder = glob.glob(base_dir + '28*')[0]
 device_file = device_folder + '/w1_slave'
+
 def read_rom():
-    name_file=device_folder+'/name'
-    f = open(name_file,'r')
-    return f.readline()
- 
+    """Read sensor ROM ID"""
+    with open(device_folder + '/name', 'r') as f:
+        return f.readline().strip()
+
 def read_temp_raw():
-    f = open(device_file, 'r')
-    lines = f.readlines()
-    f.close()
+    """Read the raw temperature data"""
+    with open(device_file, 'r') as f:
+        lines = f.readlines()
     return lines
- 
+
 def read_temp():
+    """Read and parse temperature in Fahrenheit"""
     lines = read_temp_raw()
-    # Analyze if the last 3 characters are 'YES'.
     while lines[0].strip()[-3:] != 'YES':
-            time.sleep(0.2)
-            lines = read_temp_raw()
-    # Find the index of 't=' in a string.
+        time.sleep(0.2)
+        lines = read_temp_raw()
     equals_pos = lines[1].find('t=')
     if equals_pos != -1:
-            # Read the temperature .
-            temp_string = lines[1][equals_pos+2:]
-            temp_c = float(temp_string) / 1000.0
-            temp_f = temp_c * 9.0 / 5.0 + 32.0
-            return temp_f
- 
-
-def beep(duration):
-    """ Make the buzzer beep for a specified duration """
-    buzzer_on()
-    time.sleep(duration)
-    buzzer_off()
-    time.sleep(duration)
+        temp_string = lines[1][equals_pos + 2:]
+        temp_c = float(temp_string) / 1000.0
+        temp_f = temp_c * 9.0 / 5.0 + 32.0
+        return temp_f
 
 def loop():
-    """ Main loop that checks the distance and controls the buzzer """
-    while True:
-        temp = read_temp()
-        print(' F=%3.3f'% read_temp())
+    """Main loop that monitors temperature and toggles active state with button"""
+    print("System started. Press the button to toggle monitoring ON/OFF.")
+    monitoring = True  # Start in ON state
+    last_button_state = GPIO.input(ButtonPin)
+    debounce_time = 0.2  # seconds
 
-        if temp < 80:  # If the temperature is below 30F, buzz continuously
-            buzzer_on()
-	        time.sleep(2)
+    while True:
+        current_button_state = GPIO.input(ButtonPin)
+
+        # Detect button press (falling edge)
+        if last_button_state == GPIO.HIGH and current_button_state == GPIO.LOW:
+            monitoring = not monitoring
+            if monitoring:
+                print("Monitoring RESUMED.")
+            else:
+                print("Monitoring PAUSED.")
+                buzzer_off()
+            time.sleep(debounce_time)
+
+        last_button_state = current_button_state
+
+        # Only run temperature and buzzer logic if monitoring is active
+        if monitoring:
+            temp = read_temp()
+            print('Temperature: {:.2f} °F'.format(temp))
+
+            if temp < 70:
+                buzzer_on()
+                time.sleep(2)
+                buzzer_off()
+            else:
+                buzzer_off()
+                time.sleep(0.3)
         else:
-            buzzer_off()  # Turn off buzzer if object is far
-        time.sleep(0.3)
+            # When paused, keep buzzer off and just idle
+            buzzer_off()
+            time.sleep(0.1)
 
 def destroy():
-    """ Cleanup function to reset GPIO settings """
-    GPIO.output(Gpin, GPIO.HIGH)       # Green led off
-    GPIO.output(Rpin, GPIO.HIGH)
+    """Cleanup GPIO pins"""
+    buzzer_off()
     GPIO.cleanup()
 
 if __name__ == "__main__":
@@ -117,4 +105,6 @@ if __name__ == "__main__":
     try:
         loop()
     except KeyboardInterrupt:
+        print("\nKeyboard interrupt detected. Exiting program...")
+    finally:
         destroy()
