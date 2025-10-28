@@ -75,9 +75,10 @@ def loop():
         temp = read_temp()
         print(' F=%3.3f'% read_temp())
 
-        if temp < 80:  # If the temperature is below 30F, buzz continuously
+        if temp < 70:  # If the temperature is below 30F, buzz continuously
             buzzer_on()
-	        time.sleep(2)
+            time.sleep(2)
+            buzzer_off()
         else:
             buzzer_off()  # Turn off buzzer if object is far
         time.sleep(0.3)
